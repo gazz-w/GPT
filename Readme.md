@@ -1,0 +1,1 @@
+Projeto em python de um chatbot com a API da openAI
