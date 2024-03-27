@@ -6,6 +6,7 @@ from time import sleep
 from helpers import *
 from selecionar_persona import *
 from selecionar_documento import *
+from assistente_teste import *
 
 load_dotenv()
 
@@ -15,50 +16,74 @@ modelo = "gpt-4-0125-preview"
 app = Flask(__name__)
 app.secret_key = 'alura'
 
+assistente = pegar_json()
+thread_id = assistente["thread_id"]
+assistente_id = assistente["assistant_id"]
+file_ids = assistente["file_ids"]
+
+STATUS_COMPLETED = "completed"
+STATUS_REQUIRES_ACTION = "requires_action"
+
 
 def bot(prompt):
     maximo_tentativas = 1
     repeticao = 0
-    personalidade = personas[selecionar_persona(prompt)]
-    contexto = selecionar_contexto(prompt)
-    documento_selecionado = selecionar_documento(contexto)
 
     while True:
         try:
-            prompt_do_sistema = f'''Você é um chatbot de atendimento a clientes de um e-commerce.
-            Você não deve responder perguntars que não sejam dados do ecomerce informado!
+            personalidade = personas[selecionar_persona(prompt)]
 
-            Você deve gerar respostas utilizando o contexto abaixo
-            Você deve adotar a persona abaixo.
-            # Contexto
-            {documento_selecionado}
+            cliente.beta.threads.messages.create(
+                thread_id=thread_id,
+                role="user",
+                content=f"""
+                Assuma, de agora em diante, a personalidade abaixo. 
+                Ignore as personalidades anteriores.
 
-            #Persona
-            {personalidade}
-            '''
-            response = cliente.chat.completions.create(
-                messages=[
-                    {
-                        "role": "system",
-                        "content": prompt_do_sistema
-                    },
-                    {
-                        "role": "user",
-                        "content": prompt
-                    }
-                ],
-                temperature=1,
-                max_tokens=1000,
-                top_p=1,
-                frequency_penalty=0,
-                presence_penalty=0,
-                model=modelo)
-            return response
+                # Persona
+                {personalidade}
+                """,
+                file_ids=file_ids
+            )
+
+            cliente.beta.threads.messages.create(
+                thread_id=thread_id,
+                role="user",
+                content=prompt,
+                file_ids=file_ids
+            )
+
+            run = cliente.beta.threads.runs.create(
+                thread_id=thread_id,
+                assistant_id=assistente_id
+            )
+
+            while run.status != STATUS_COMPLETED:
+                run = cliente.beta.threads.runs.retrieve(
+                    thread_id=thread_id,
+                    run_id=run.id
+                )
+
+            if run.status == STATUS_REQUIRES_ACTION:
+                tools_acionadas = run.required_action.submit_tool_outputs.tool_calls
+                respostas_tools_acionadas = []
+                for uma_tool in tools_acionadas:
+                    nome_funcao = uma_tool.function.name
+                    funcao_escolhida = minhas_funcoes[nome_funcao]
+                    argumentos = json.loads(uma_tool.function.arguments)
+                    print(argumentos)
+                    resposta_funcao = funcao_escolhida(argumentos)
+
+            historico = list(cliente.beta.threads.messages.list(
+                thread_id=thread_id).data)
+            resposta = historico[0]
+            return resposta
+
         except Exception as erro:
             repeticao += 1
             if repeticao >= maximo_tentativas:
                 return "Erro no GPT: %s" % erro
-            print('erro de comunicação com OpenAI:', erro)
+            print('Erro de comunicação com OpenAI', erro)
             sleep(1)
 
 
@@ -66,7 +91,7 @@ def bot(prompt):
 def chat():
     prompt = request.json["msg"]
     resposta = bot(prompt)
-    texto_resposta = resposta.choices[0].message.content
+    texto_resposta = resposta.content[0].text.value
     return texto_resposta
 
 
