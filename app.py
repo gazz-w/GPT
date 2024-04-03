@@ -7,6 +7,8 @@ from helpers import *
 from selecionar_persona import *
 from selecionar_documento import *
 from assistente_teste import *
+from vision import analisar_imagem
+import uuid
 
 load_dotenv()
 
@@ -24,8 +26,12 @@ file_ids = assistente["file_ids"]
 STATUS_COMPLETED = "completed"
 STATUS_REQUIRES_ACTION = "requires_action"
 
+caminho_imagem_enviada = None
+UPLOAD_FOLDER = 'dados'
+
 
 def bot(prompt):
+    global caminho_imagem_enviada
     maximo_tentativas = 1
     repeticao = 0
 
@@ -46,10 +52,17 @@ def bot(prompt):
                 file_ids=file_ids
             )
 
+            resposta_vision = ""
+            if caminho_imagem_enviada != None:
+                resposta_vision = analisar_imagem(caminho_imagem_enviada)
+                resposta_vision += ".na resposta final, apresente detalhes da descrição da imagem"
+                os.remove(caminho_imagem_enviada)
+                caminho_imagem_enviada = ""
+
             cliente.beta.threads.messages.create(
                 thread_id=thread_id,
                 role="user",
-                content=prompt,
+                content=resposta_vision + prompt,
                 file_ids=file_ids
             )
 
@@ -101,9 +114,16 @@ def bot(prompt):
 
 @app.route('/upload_imagem', methods=['POST'])
 def upload_imagem():
+    global caminho_imagem_enviada
     if 'imagem' in request.files:
         imagem_enviada = request.files['imagem']
-        print(imagem_enviada)
+
+        nome_arquivo = str(uuid.uuid4()) + \
+            os.path.splitext(imagem_enviada.filename)[1]
+        caminho_arquivo = os.path.join(UPLOAD_FOLDER, nome_arquivo)
+        imagem_enviada.save(caminho_arquivo)
+        caminho_imagem_enviada = caminho_arquivo
+
         return 'Imagem recebida com sucesso!', 200
     return 'Nenhum arquivo foi enviado', 400
 
